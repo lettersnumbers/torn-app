@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from api_core import TornEngine
 import requests
@@ -17,6 +17,11 @@ import os
 ITEM_CACHE = {}
 ITEM_CACHE_FILE = 'items_cache.json'
 
+def get_api_key():
+    """Retrieves API Key from Client Headers."""
+    key = request.headers.get('X-Torn-Key')
+    return key
+
 def load_items_on_startup():
     """Fetches all items from Torn once when the server starts, using local cache if available."""
     global ITEM_CACHE
@@ -30,36 +35,11 @@ def load_items_on_startup():
             print(f"✅ Loaded {len(ITEM_CACHE)} items from cache.")
             return
         except Exception as e:
-            print(f"⚠️ Failed to load cache: {e}. Fetching from API...")
-
-    print("⏳ Initialization: Loading Item Database from Torn...")
+            print(f"⚠️ Failed to load cache: {e}.")
     
-    # Use the engine to make the request safely
-    data = engine.make_request('torn', 'items')
-
-    if not data or 'items' not in data:
-        print("❌ Critical Error: Could not load items from Torn.")
-        return
-
-    count = 0
-    for item_id, details in data['items'].items():
-        ITEM_CACHE[item_id] = {
-            "id": item_id,
-            "name": details['name'],
-            # Store the 'type' (e.g., Drug, Medical) for correct linking
-            "type": details.get('type', 'Other') 
-        }
-        count += 1
-    
-    # Save to local file
-    try:
-        with open(ITEM_CACHE_FILE, 'w') as f:
-            json.dump(ITEM_CACHE, f)
-        print("💾 Items saved to local cache.")
-    except Exception as e:
-        print(f"⚠️ Failed to save cache: {e}")
-
-    print(f"✅ Database loaded! {count} items ready.")
+    # NOTE: In BYOK mode, we cannot fetch from API on startup because we don't have a key yet.
+    # We rely on the cache file being present (committed to repo).
+    print("⚠️ server started without item cache. Items dropdown may be empty until cache is updated manually.")
 
 # --- Run the load function immediately on startup ---
 load_items_on_startup()
@@ -71,8 +51,11 @@ load_items_on_startup()
 @app.route('/api/user', methods=['GET'])
 def get_user():
     """Fetches User Profile + Bars + MONEY."""
+    key = get_api_key()
+    if not key: return jsonify({"error": "Missing API Key"}), 401
+
     # Added 'money,cooldowns,events' to fetch comprehensive user data
-    data = engine.make_request('user', 'basic,profile,bars,money,cooldowns,events')
+    data = engine.make_request('user', 'basic,profile,bars,money,cooldowns,events', api_key=key)
     if data:
         if 'error' in data:
             return jsonify(data), 400
@@ -86,7 +69,10 @@ def get_user():
 @app.route('/api/faction', methods=['GET'])
 def get_faction():
     """Fetches Faction Data (Chain, Basic Info)."""
-    data = engine.make_request('faction', 'basic,chain')
+    key = get_api_key()
+    if not key: return jsonify({"error": "Missing API Key"}), 401
+
+    data = engine.make_request('faction', 'basic,chain', api_key=key)
     
     if data:
         if 'error' in data:
@@ -113,7 +99,10 @@ def scan_lowest(item_id):
     """
     BUTTON 1: 'SCAN' - Fetches 10 absolute lowest listings.
     """
-    url = f"https://api.torn.com/v2/market/?selections=bazaar,itemmarket&id={item_id}&key={config.API_KEY}&limit=50"
+    key = get_api_key()
+    if not key: return jsonify({"error": "Missing API Key"}), 401
+
+    url = f"https://api.torn.com/v2/market/?selections=bazaar,itemmarket&id={item_id}&key={key}&limit=50"
     
     # Get Category for the Link
     item_info = ITEM_CACHE.get(str(item_id))
@@ -180,8 +169,11 @@ def scan_shops(item_id):
     """
     BUTTON 2: 'BAZAARS' - Deep scans top bulk sellers.
     """
+    key = get_api_key()
+    if not key: return jsonify({"error": "Missing API Key"}), 401
+
     # Added itemmarket to selections just to get the average price metadata safely
-    url = f"https://api.torn.com/v2/market/?selections=bazaar,itemmarket&id={item_id}&key={config.API_KEY}"
+    url = f"https://api.torn.com/v2/market/?selections=bazaar,itemmarket&id={item_id}&key={key}"
     
     listings = []
     
@@ -206,7 +198,7 @@ def scan_shops(item_id):
                 avg_price = 0
                 try:
                     # Quick fetch of itemmarket to get 'average_price' metadata
-                    price_url = f"https://api.torn.com/v2/market/?selections=itemmarket&id={item_id}&key={config.API_KEY}"
+                    price_url = f"https://api.torn.com/v2/market/?selections=itemmarket&id={item_id}&key={key}"
                     p_resp = requests.get(price_url).json()
                     if 'itemmarket' in p_resp and 'item' in p_resp['itemmarket']:
                         avg_price = p_resp['itemmarket']['item'].get('average_price', 0)
@@ -256,7 +248,7 @@ def scan_shops(item_id):
                 # Increase limit to top 15 to find more results since we removed itemmarket fallback
                 for shop in specialized[:15]:
                     try:
-                        shop_url = f"https://api.torn.com/v2/user/{shop.get('id')}/bazaar/?key={config.API_KEY}"
+                        shop_url = f"https://api.torn.com/v2/user/{shop.get('id')}/bazaar/?key={key}"
                         shop_resp = requests.get(shop_url).json()
                         
                         shop_items = shop_resp.get('bazaar', [])

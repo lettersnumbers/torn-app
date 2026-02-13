@@ -4,20 +4,22 @@ import config  # Imports your config.py file
 
 class TornEngine:
     def __init__(self):
-        # Load API Key from config
-        self.api_key = config.API_KEY
+        # API Key is now passed per request
         self.base_url = "https://api.torn.com"
 
-    def make_request(self, endpoint, selection, id_val=""):
+    def make_request(self, endpoint, selection, id_val="", api_key=None):
         """
         Generic method to fetch data from Torn API.
         endpoint: 'user', 'faction', 'market', etc.
         selection: specific data to retrieve (e.g., 'basic', 'stocks')
         id_val: Optional ID (user ID, item ID, etc.)
+        api_key: User's API Key (Required)
         """
-        
+        if not api_key:
+            return {"error": {"code": 0, "error": "Missing API Key"}}
+
         # Build the URL
-        url = f"{self.base_url}/{endpoint}/{id_val}?selections={selection}&key={self.api_key}"
+        url = f"{self.base_url}/{endpoint}/{id_val}?selections={selection}&key={api_key}"
 
         try:
             response = requests.get(url)

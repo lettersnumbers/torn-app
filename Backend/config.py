@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv('TORN_API_KEY')
+# API_KEY is now provided by the user via headers
+# API_KEY = os.getenv('TORN_API_KEY')
 REQUEST_DELAY = 2          # Seconds to wait between requests (Safety)
 
 # App Settings

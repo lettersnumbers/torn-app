@@ -2,15 +2,30 @@ import { useState, useEffect } from 'react';
 import ItemScanner from './ItemScanner';
 import Cooldowns from './Cooldowns';
 import EventsList from './EventsList';
+import ApiKeyInput from './ApiKeyInput';
 import { fetchUser, fetchFaction } from './api';
 import './index.css';
 
 function App() {
+  const [apiKey, setApiKey] = useState(localStorage.getItem('torn_api_key'));
   const [userData, setUserData] = useState(null);
   const [factionData, setFactionData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
+  // If apiKey changes, save to local storage
   useEffect(() => {
+    if (apiKey) {
+      localStorage.setItem('torn_api_key', apiKey);
+      loadData();
+    } else {
+      localStorage.removeItem('torn_api_key');
+      setUserData(null);
+      setFactionData(null);
+    }
+  }, [apiKey]);
+
+  const loadData = () => {
+    setLoading(true);
     fetchUser()
       .then(data => {
         setUserData(data);
@@ -19,27 +34,50 @@ function App() {
       .catch(err => {
         console.error(err);
         setLoading(false);
+        if (err.message === 'Unauthorized') {
+          setApiKey(null); // Force re-login if unauthorized
+        }
       });
 
     fetchFaction()
       .then(setFactionData)
       .catch(console.error);
+  };
 
-  }, []);
-
-  const getStatusColor = (status) => {
+  const statusColor = (status) => {
+    // safe extraction to avoid crashing if status missing
     if (!status) return 'bg-gray-500';
     if (status.state === 'Okay') return 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]';
     if (status.state === 'Idle') return 'bg-orange-400';
     return 'bg-red-500';
+  }
+
+  // LOGOUT (Clear Key)
+  const handleLogout = () => {
+    if (confirm('Are you sure you want to disconnect? This will remove your API Key from this browser.')) {
+      setApiKey(null);
+    }
   };
 
+  if (!apiKey) {
+    return <ApiKeyInput onSave={setApiKey} />;
+  }
+
   return (
-    <div className="min-h-screen p-6 flex flex-col items-center w-full"> {/* Ensure full width center */}
+    <div className="min-h-screen p-6 flex flex-col items-center w-full relative"> {/* Ensure full width center */}
 
       {/* HEADER BANNER */}
-      <h1 className="text-4xl font-extrabold mb-8 text-white tracking-widest uppercase border-b-2 border-[#444] pb-4 w-full max-w-5xl text-center">
+      <h1 className="text-4xl font-extrabold mb-8 text-white tracking-widest uppercase border-b-2 border-[#444] pb-4 w-full max-w-5xl text-center relative group">
         Torn <span className="text-[#99b3cc]">Terminal</span>
+
+        {/* Logout Button (Hidden by default, visible on hover of header, or absolute top right) */}
+        <button
+          onClick={handleLogout}
+          className="absolute right-0 top-0 bottom-4 text-[10px] text-gray-600 hover:text-red-500 font-mono transition-colors uppercase"
+          title="Disconnect API Key"
+        >
+          Disconnect
+        </button>
       </h1>
 
       <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -49,7 +87,7 @@ function App() {
 
           {/* USER PANEL */}
           <div className="torn-panel rounded-md overflow-hidden">
-            {loading && <p className="text-gray-400 p-4 text-center">Loading User Profile...</p>}
+            {loading && !userData && <p className="text-gray-400 p-4 text-center">Loading User Profile...</p>}
 
             {userData && (
               <>
@@ -57,7 +95,7 @@ function App() {
                 <div className="bg-[#222] p-4 border-b border-[#444] flex flex-col gap-2">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${getStatusColor(userData.status)}`} title={userData.status?.description}></div>
+                      <div className={`w-3 h-3 rounded-full ${statusColor(userData.status)}`} title={userData.status?.description}></div>
                       <h2 className="text-lg font-bold text-white tracking-wide">
                         <a href={`https://www.torn.com/profiles.php?XID=${userData.player_id}`} target="_blank" rel="noreferrer" className="hover:underline torn-text-blue">
                           {userData.name}
