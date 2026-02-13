@@ -1,4 +1,6 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+// In production (Vercel), API is served from the same domain, so we use empty string for relative path.
+// In development, we use the env var (likely http://127.0.0.1:5000)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 export const fetchUser = async () => {
     const res = await fetch(`${API_BASE_URL}/api/user`);
