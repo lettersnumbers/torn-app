@@ -14,8 +14,19 @@ import json
 import os
 
 # Global Cache for Items
+# Global Cache for Items
 ITEM_CACHE = {}
-ITEM_CACHE_FILE = 'items_cache.json'
+# vvv FIXED: Use absolute path relative to this file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ITEM_CACHE_FILE = os.path.join(BASE_DIR, 'items_cache.json')
+
+# DEBUG: Return Server Errors to Frontend for Troubleshooting
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    tb = traceback.format_exc()
+    print(f"❌ 500 ERROR: {tb}") # Log to Vercel/Server logs
+    return jsonify({"error": str(e), "traceback": tb}), 500
 
 def get_api_key():
     """Retrieves API Key from Client Headers."""
