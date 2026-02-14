@@ -1,6 +1,10 @@
 import requests
 import time
-import config  # Imports your config.py file
+
+try:
+    from . import config
+except ImportError:
+    import config
 
 class TornEngine:
     def __init__(self):
