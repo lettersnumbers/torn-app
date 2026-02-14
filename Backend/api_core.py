@@ -24,6 +24,7 @@ class TornEngine:
 
         # Build the URL
         url = f"{self.base_url}/{endpoint}/{id_val}?selections={selection}&key={api_key}"
+        print(f"DEBUG: Requesting {url.replace(api_key, '***')}") # Log URL but hide key
 
         try:
             response = requests.get(url)
@@ -37,11 +38,17 @@ class TornEngine:
                 return data
 
             # Apply the delay defined in config.py to avoid rate limits
-            if hasattr(config, 'REQUEST_DELAY'):
-                time.sleep(config.REQUEST_DELAY)
+            # Vercel Optimization: Skip sleep to avoid timeouts/costs
+            # if hasattr(config, 'REQUEST_DELAY'):
+            #     time.sleep(config.REQUEST_DELAY)
             
             return data
 
         except requests.exceptions.RequestException as e:
             print(f"HTTP Request failed: {e}")
-            return None
+            return {"error": f"HTTP Failed: {str(e)}"}
+        except Exception as e:
+            print(f"Unexpected Error in make_request: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": f"Internal Error: {str(e)}"}
