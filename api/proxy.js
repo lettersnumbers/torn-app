@@ -1,26 +1,31 @@
+import fetch from 'node-fetch'; // Vercel provides this in Node runtime or built-in in Node 18+
 
-export const config = {
-    runtime: 'edge',
-};
+export default async function handler(req, res) {
+    // Enable CORS
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, X-Torn-Key'
+    );
 
-export default async function handler(req) {
-    const url = new URL(req.url);
-    const target = url.searchParams.get('url'); // ?url=https://api.torn.com/...
-    const key = req.headers.get('X-Torn-Key');
-
-    if (!target) {
-        return new Response(JSON.stringify({ error: 'Missing URL' }), {
-            status: 400,
-            headers: { 'content-type': 'application/json' }
-        });
+    // Handle OPTIONS request
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
     }
 
-    // Security: Ensure we only proxy to Torn or Weav3r
-    if (!target.startsWith('https://api.torn.com/') && !target.startsWith('https://weav3r.dev/')) {
-        return new Response(JSON.stringify({ error: 'Forbidden Target' }), {
-            status: 403,
-            headers: { 'content-type': 'application/json' }
-        });
+    const { url } = req.query; // Vercel parses query params
+    const key = req.headers['x-torn-key'];
+
+    if (!url) {
+        return res.status(400).json({ error: 'Missing URL' });
+    }
+
+    // Security Check
+    if (!url.startsWith('https://api.torn.com/') && !url.startsWith('https://weav3r.dev/')) {
+        return res.status(403).json({ error: 'Forbidden Target' });
     }
 
     try {
@@ -29,28 +34,16 @@ export default async function handler(req) {
             'Accept': 'application/json'
         };
 
-        // Inject Key if present (or rely on it being in the URL parameters from frontend)
-        // The frontend currently puts the key in the URL for direct calls, but we can support headers too.
-
-        const response = await fetch(target, {
+        const response = await fetch(url, {
             method: 'GET',
             headers: headers
         });
 
         const data = await response.json();
+        return res.status(response.status).json(data);
 
-        return new Response(JSON.stringify(data), {
-            status: response.status,
-            headers: {
-                'content-type': 'application/json',
-                'Access-Control-Allow-Origin': '*', // Fix CORS
-                'Cache-Control': 'no-store'
-            }
-        });
-    } catch (err) {
-        return new Response(JSON.stringify({ error: 'Proxy Error', details: err.message }), {
-            status: 500,
-            headers: { 'content-type': 'application/json' }
-        });
+    } catch (error) {
+        console.error("Proxy Error:", error);
+        return res.status(500).json({ error: 'Proxy Error', details: error.message });
     }
 }
