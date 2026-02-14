@@ -1,49 +1,76 @@
-// Native fetch is available in Node.js 18+
 
-export default async function handler(req, res) {
-    // Enable CORS
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, X-Torn-Key'
-    );
+export const config = {
+    runtime: 'edge',
+};
 
-    // Handle OPTIONS request
+export default async function handler(req) {
+    // 1. Handle CORS Preflight
     if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-
-    const { url } = req.query; // Vercel parses query params
-    const key = req.headers['x-torn-key'];
-
-    if (!url) {
-        return res.status(400).json({ error: 'Missing URL' });
-    }
-
-    // Security Check
-    if (!url.startsWith('https://api.torn.com/') && !url.startsWith('https://weav3r.dev/')) {
-        return res.status(403).json({ error: 'Forbidden Target' });
+        return new Response(null, {
+            status: 200,
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, X-Torn-Key'
+            }
+        });
     }
 
     try {
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json'
-        };
+        const urlObj = new URL(req.url);
+        const targetUrl = urlObj.searchParams.get('url');
+        const key = req.headers.get('X-Torn-Key');
 
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: headers
+        if (!targetUrl) {
+            return new Response(JSON.stringify({ error: 'Missing URL param' }), {
+                status: 400,
+                headers: { 'Content-Type': 'application/json' }
+            });
+        }
+
+        // 2. Fetch from Torn
+        // We spoof the User-Agent to look like a browser
+        const upstreamResponse = await fetch(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json'
+            }
         });
 
-        const data = await response.json();
-        return res.status(response.status).json(data);
+        // 3. Check for HTML (Cloudflare Block)
+        const contentType = upstreamResponse.headers.get('content-type');
+        if (contentType && contentType.includes('text/html')) {
+            const text = await upstreamResponse.text();
+            console.error("Blocked by Cloudflare:", text.substring(0, 200));
+            return new Response(JSON.stringify({
+                error: 'Upstream Blocked (Cloudflare)',
+                details: 'The Torn API rejected the request with an HTML page (likely a CAPTCHA).'
+            }), {
+                status: 502,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            });
+        }
 
-    } catch (error) {
-        console.error("Proxy Error:", error);
-        return res.status(500).json({ error: 'Proxy Error', details: error.message });
+        // 4. Return JSON
+        const data = await upstreamResponse.text(); // Get text first to be safe
+        return new Response(data, {
+            status: upstreamResponse.status,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
+
+    } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+            status: 500, // 522 is specifically Cloudflare timeout, 500 is generic
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
     }
 }
