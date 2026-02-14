@@ -27,8 +27,9 @@ class TornEngine:
         print(f"DEBUG: Requesting {url.replace(api_key, '***')}") # Log URL but hide key
 
         headers = {
-            'User-Agent': 'TornApp/1.0 (contact: github.com/lettersnumbers/torn-app)',
-            'Accept': 'application/json'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
 
         try:
