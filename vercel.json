@@ -2,8 +2,8 @@
     "version": 2,
     "builds": [
         {
-            "src": "api/index.py",
-            "use": "@vercel/python"
+            "src": "api/proxy.js",
+            "use": "@vercel/edge"
         },
         {
             "src": "frontend/package.json",
@@ -15,8 +15,8 @@
     ],
     "routes": [
         {
-            "src": "/api/(.*)",
-            "dest": "api/index.py"
+            "src": "/api/proxy",
+            "dest": "api/proxy.js"
         },
         {
             "src": "/(.*)",

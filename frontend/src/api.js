@@ -21,25 +21,48 @@ const handleResponse = async (res) => {
     return res;
 };
 
+// --- HELPER: PROXY CALL ---
+const fetchViaProxy = async (targetUrl) => {
+    // Determine proxy URL (relative for prod, absolute for dev if needed)
+    // We assume the app is served from the same domain
+    const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+
+    // We don't send headers here because the proxy will add them? 
+    // Wait, we need to send the Key to the proxy so it can forward it?
+    // No, putting key in URL is safer for the proxy call itself, but 
+    // our proxy.js reads headers.get('X-Torn-Key') OR url params.
+    // Let's pass the key in the header to the PROXY.
+
+    const key = getApiKey();
+    if (!key) throw new Error("No Key");
+
+    const res = await fetch(proxyUrl, {
+        headers: {
+            'X-Torn-Key': key
+        }
+    });
+
+    return handleResponse(await res.json());
+};
+
 // --- DATA FETCHING ---
 
 export const fetchUser = async () => {
     const key = getApiKey();
     if (!key) throw new Error("No Key");
 
-    // Fetch User Data
-    const url = `${API_BASE_URL}/user/?selections=basic,profile,bars,money,cooldowns,events&key=${key}`;
-    const res = await fetch(url).then(r => r.json());
-    return handleResponse(res);
+    const target = `${API_BASE_URL}/user/?selections=basic,profile,bars,money,cooldowns,events&key=${key}`;
+    const res = await fetchViaProxy(target);
+    return res;
 };
 
 export const fetchFaction = async () => {
     const key = getApiKey();
     if (!key) throw new Error("No Key");
 
-    const url = `${API_BASE_URL}/faction/?selections=basic,chain&key=${key}`;
-    const res = await fetch(url).then(r => r.json());
-    return handleResponse(res);
+    const target = `${API_BASE_URL}/faction/?selections=basic,chain&key=${key}`;
+    const res = await fetchViaProxy(target);
+    return res;
 };
 
 export const fetchItems = async () => {
@@ -56,9 +79,8 @@ export const scanLowest = async (itemId) => {
     const key = getApiKey();
     if (!key) throw new Error("No Key");
 
-    const url = `${API_BASE_URL}/v2/market/?selections=bazaar,itemmarket&id=${itemId}&key=${key}&limit=50`;
-    const resp = await fetch(url).then(r => r.json());
-    const data = await handleResponse(resp); // Handle Torn errors
+    const target = `${API_BASE_URL}/v2/market/?selections=bazaar,itemmarket&id=${itemId}&key=${key}&limit=50`;
+    const data = await fetchViaProxy(target);
 
     // Parse Data
     let avgPrice = 0;
@@ -107,59 +129,58 @@ export const scanShops = async (itemId) => {
 
     // --- STRATEGY A: Weav3r API ---
     try {
-        const wRes = await fetch(`${WEAV3R_API_URL}/${itemId}`);
-        if (wRes.ok) {
-            const wData = await wRes.json();
-            if (wData.listings && wData.listings.length > 0) {
+        // Weav3r is also fetched via proxy to be safe (CORS)
+        const wTarget = `${WEAV3R_API_URL}/${itemId}`;
+        const wData = await fetchViaProxy(wTarget);
 
-                // Need Avg Price from Torn
-                try {
-                    const pUrl = `${API_BASE_URL}/v2/market/?selections=itemmarket&id=${itemId}&key=${key}`;
-                    const pRes = await fetch(pUrl).then(r => r.json());
-                    if (pRes.itemmarket?.item?.average_price) {
-                        avgPrice = pRes.itemmarket.item.average_price;
-                    }
-                } catch (e) {
-                    console.warn("Failed to fetch avg price", e);
+        if (wData.listings && wData.listings.length > 0) {
+
+            // Need Avg Price from Torn
+            try {
+                const pTarget = `${API_BASE_URL}/v2/market/?selections=itemmarket&id=${itemId}&key=${key}`;
+                const pRes = await fetchViaProxy(pTarget);
+                if (pRes.itemmarket?.item?.average_price) {
+                    avgPrice = pRes.itemmarket.item.average_price;
                 }
-
-                wData.listings.forEach(item => {
-                    listings.push({
-                        source: `Bazaar: ${item.player_name || 'Unknown'}`,
-                        price: item.price,
-                        qty: item.quantity,
-                        market_value: avgPrice,
-                        link: `https://www.torn.com/bazaar.php?userId=${item.player_id}#/`
-                    });
-                });
-
-                return listings.sort((a, b) => a.price - b.price).slice(0, 50);
+            } catch (e) {
+                console.warn("Failed to fetch avg price", e);
             }
+
+            wData.listings.forEach(item => {
+                listings.push({
+                    source: `Bazaar: ${item.player_name || 'Unknown'}`,
+                    price: item.price,
+                    qty: item.quantity,
+                    market_value: avgPrice,
+                    link: `https://www.torn.com/bazaar.php?userId=${item.player_id}#/`
+                });
+            });
+
+            return listings.sort((a, b) => a.price - b.price).slice(0, 50);
         }
     } catch (e) {
         console.warn("Weav3r failed, falling back...", e);
     }
 
     // --- STRATEGY B: Official Torn API Fallback (Deep Scan) ---
-    const url = `${API_BASE_URL}/v2/market/?selections=bazaar,itemmarket&id=${itemId}&key=${key}`;
-    const resp = await fetch(url).then(r => r.json());
-    const data = await handleResponse(resp);
+    const target = `${API_BASE_URL}/v2/market/?selections=bazaar,itemmarket&id=${itemId}&key=${key}`;
+    const data = await fetchViaProxy(target);
 
     if (data.itemmarket?.item?.average_price) {
         avgPrice = data.itemmarket.item.average_price;
     }
 
     if (data.bazaar?.specialized) {
-        // Limit to top 10 shops to avoid hitting rate limits too hard (10 + 1 requests)
+        // Limit to top 10 shops
         const shops = data.bazaar.specialized.slice(0, 10);
 
-        // Fetch in parallel
-        const promises = shops.map(shop =>
-            fetch(`${API_BASE_URL}/v2/user/${shop.id}/bazaar/?key=${key}`)
-                .then(r => r.json())
+        // Fetch in parallel via proxy
+        const promises = shops.map(shop => {
+            const shopTarget = `${API_BASE_URL}/v2/user/${shop.id}/bazaar/?key=${key}`;
+            return fetchViaProxy(shopTarget)
                 .then(shopData => ({ shop, items: shopData.bazaar }))
-                .catch(() => null)
-        );
+                .catch(() => null);
+        });
 
         const shopResults = await Promise.all(promises);
 
