@@ -1,8 +1,15 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from api_core import TornEngine
+
+# vvv FIXED: Handle imports for both Script (Local) and Package (Vercel) execution
+try:
+    from .api_core import TornEngine
+    from . import config
+except ImportError:
+    from api_core import TornEngine
+    import config
+
 import requests
-import config
 
 app = Flask(__name__)
 CORS(app)  # Allows React to communicate with Flask
