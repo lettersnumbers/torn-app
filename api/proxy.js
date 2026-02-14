@@ -1,4 +1,4 @@
-import fetch from 'node-fetch'; // Vercel provides this in Node runtime or built-in in Node 18+
+// Native fetch is available in Node.js 18+
 
 export default async function handler(req, res) {
     // Enable CORS
