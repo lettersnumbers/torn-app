@@ -128,8 +128,10 @@ def scan_lowest(item_id):
     
     item_market_link = f"https://www.torn.com/page.php?sid=ItemMarket#/market/view=category&categoryName={category}&itemID={item_id}"
 
+    headers = {'User-Agent': 'TornApp/1.0'}
+
     try:
-        resp = requests.get(url)
+        resp = requests.get(url, headers=headers)
         data = resp.json()
         if 'error' in data: return jsonify({"error": data['error'].get('error', 'API Error')}), 400
         
@@ -242,7 +244,8 @@ def scan_shops(item_id):
     # Only if Strategy A fails. Scans 'specialized' shops.
     try:
         print(f"DEBUG: Fallback to Official API for {item_id}...")
-        resp = requests.get(url)
+        headers = {'User-Agent': 'TornApp/1.0'}
+        resp = requests.get(url, headers=headers)
         data = resp.json()
         
         if 'error' in data:

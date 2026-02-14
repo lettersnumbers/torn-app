@@ -26,8 +26,13 @@ class TornEngine:
         url = f"{self.base_url}/{endpoint}/{id_val}?selections={selection}&key={api_key}"
         print(f"DEBUG: Requesting {url.replace(api_key, '***')}") # Log URL but hide key
 
+        headers = {
+            'User-Agent': 'TornApp/1.0 (contact: github.com/lettersnumbers/torn-app)',
+            'Accept': 'application/json'
+        }
+
         try:
-            response = requests.get(url)
+            response = requests.get(url, headers=headers)
             response.raise_for_status()  # Raises error for 404, 500, etc.
             
             data = response.json()
