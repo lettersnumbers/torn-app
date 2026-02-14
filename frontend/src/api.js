@@ -1,50 +1,194 @@
-// In production (Vercel), API is served from the same domain, so we use empty string for relative path.
-// In development, we use the env var (likely http://127.0.0.1:5000)
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE_URL = 'https://api.torn.com'; // Direct to Torn
+const WEAV3R_API_URL = 'https://weav3r.dev/api/marketplace';
 
-const getHeaders = () => {
-    const key = localStorage.getItem('torn_api_key');
-    return {
-        'Content-Type': 'application/json',
-        'X-Torn-Key': key || ''
-    };
-};
+const getApiKey = () => localStorage.getItem('torn_api_key') || '';
 
 const handleResponse = async (res) => {
-    if (res.status === 401) {
-        // Clear key if unauthorized (expired/invalid)
+    if (res.status === 401 || (res.error && res.error.code === 2)) {
         localStorage.removeItem('torn_api_key');
-        window.location.reload(); // Reload to show Auth Screen
-        throw new Error('Unauthorized');
+        window.location.reload();
+        throw new Error('Unauthorized/Invalid Key');
     }
+
+    // Check for Torn API Error format
+    if (res.error) {
+        throw new Error(res.error.error || 'Torn API Error');
+    }
+
     if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'API Error');
+        throw new Error(`HTTP Error: ${res.status}`);
     }
-    return res.json();
+    return res;
 };
 
+// --- DATA FETCHING ---
+
 export const fetchUser = async () => {
-    const res = await fetch(`${API_BASE_URL}/api/user`, { headers: getHeaders() });
+    const key = getApiKey();
+    if (!key) throw new Error("No Key");
+
+    // Fetch User Data
+    const url = `${API_BASE_URL}/user/?selections=basic,profile,bars,money,cooldowns,events&key=${key}`;
+    const res = await fetch(url).then(r => r.json());
     return handleResponse(res);
 };
 
 export const fetchFaction = async () => {
-    const res = await fetch(`${API_BASE_URL}/api/faction`, { headers: getHeaders() });
+    const key = getApiKey();
+    if (!key) throw new Error("No Key");
+
+    const url = `${API_BASE_URL}/faction/?selections=basic,chain&key=${key}`;
+    const res = await fetch(url).then(r => r.json());
     return handleResponse(res);
 };
 
 export const fetchItems = async () => {
-    const res = await fetch(`${API_BASE_URL}/api/items`, { headers: getHeaders() });
-    return handleResponse(res);
+    // Fetch from local public file
+    const res = await fetch('/items_cache.json');
+    if (!res.ok) throw new Error("Failed to load item cache");
+    const data = await res.json();
+    return Object.values(data);
 };
 
+// --- SCANNING LOGIC ---
+
 export const scanLowest = async (itemId) => {
-    const res = await fetch(`${API_BASE_URL}/api/scan/lowest/${itemId}`, { headers: getHeaders() });
-    return handleResponse(res);
+    const key = getApiKey();
+    if (!key) throw new Error("No Key");
+
+    const url = `${API_BASE_URL}/v2/market/?selections=bazaar,itemmarket&id=${itemId}&key=${key}&limit=50`;
+    const resp = await fetch(url).then(r => r.json());
+    const data = await handleResponse(resp); // Handle Torn errors
+
+    // Parse Data
+    let avgPrice = 0;
+    if (data.itemmarket?.item?.average_price) {
+        avgPrice = data.itemmarket.item.average_price;
+    }
+
+    const listings = [];
+
+    // 1. Item Market
+    if (data.itemmarket?.listings) {
+        data.itemmarket.listings.forEach(item => {
+            listings.push({
+                source: "Item Market",
+                price: item.price,
+                qty: item.amount,
+                market_value: avgPrice,
+                link: `https://www.torn.com/page.php?sid=ItemMarket#/market/view=category&categoryName=Drug&itemID=${itemId}` // Note: Category hardcoded but link works
+            });
+        });
+    }
+
+    // 2. Bazaar Listings
+    if (data.bazaar?.listings) {
+        data.bazaar.listings.forEach(item => {
+            const pid = item.player_id;
+            listings.push({
+                source: "Bazaar Listing",
+                price: item.price,
+                qty: item.amount,
+                market_value: avgPrice,
+                link: pid ? `https://www.torn.com/bazaar.php?userId=${pid}#/` : '#'
+            });
+        });
+    }
+
+    return listings.sort((a, b) => a.price - b.price).slice(0, 10);
 };
 
 export const scanShops = async (itemId) => {
-    const res = await fetch(`${API_BASE_URL}/api/scan/shops/${itemId}`, { headers: getHeaders() });
-    return handleResponse(res);
+    const key = getApiKey();
+    if (!key) throw new Error("No Key");
+
+    let listings = [];
+    let avgPrice = 0;
+
+    // --- STRATEGY A: Weav3r API ---
+    try {
+        const wRes = await fetch(`${WEAV3R_API_URL}/${itemId}`);
+        if (wRes.ok) {
+            const wData = await wRes.json();
+            if (wData.listings && wData.listings.length > 0) {
+
+                // Need Avg Price from Torn
+                try {
+                    const pUrl = `${API_BASE_URL}/v2/market/?selections=itemmarket&id=${itemId}&key=${key}`;
+                    const pRes = await fetch(pUrl).then(r => r.json());
+                    if (pRes.itemmarket?.item?.average_price) {
+                        avgPrice = pRes.itemmarket.item.average_price;
+                    }
+                } catch (e) {
+                    console.warn("Failed to fetch avg price", e);
+                }
+
+                wData.listings.forEach(item => {
+                    listings.push({
+                        source: `Bazaar: ${item.player_name || 'Unknown'}`,
+                        price: item.price,
+                        qty: item.quantity,
+                        market_value: avgPrice,
+                        link: `https://www.torn.com/bazaar.php?userId=${item.player_id}#/`
+                    });
+                });
+
+                return listings.sort((a, b) => a.price - b.price).slice(0, 50);
+            }
+        }
+    } catch (e) {
+        console.warn("Weav3r failed, falling back...", e);
+    }
+
+    // --- STRATEGY B: Official Torn API Fallback (Deep Scan) ---
+    const url = `${API_BASE_URL}/v2/market/?selections=bazaar,itemmarket&id=${itemId}&key=${key}`;
+    const resp = await fetch(url).then(r => r.json());
+    const data = await handleResponse(resp);
+
+    if (data.itemmarket?.item?.average_price) {
+        avgPrice = data.itemmarket.item.average_price;
+    }
+
+    if (data.bazaar?.specialized) {
+        // Limit to top 10 shops to avoid hitting rate limits too hard (10 + 1 requests)
+        const shops = data.bazaar.specialized.slice(0, 10);
+
+        // Fetch in parallel
+        const promises = shops.map(shop =>
+            fetch(`${API_BASE_URL}/v2/user/${shop.id}/bazaar/?key=${key}`)
+                .then(r => r.json())
+                .then(shopData => ({ shop, items: shopData.bazaar }))
+                .catch(() => null)
+        );
+
+        const shopResults = await Promise.all(promises);
+
+        shopResults.forEach(res => {
+            if (!res || !res.items) return;
+            res.items.forEach(shopItem => {
+                if (String(shopItem.id) === String(itemId)) {
+                    listings.push({
+                        source: `Bazaar: ${res.shop.name}`,
+                        price: shopItem.price,
+                        qty: shopItem.quantity,
+                        market_value: avgPrice,
+                        link: `https://www.torn.com/bazaar.php?userId=${res.shop.id}#/`
+                    });
+                }
+            });
+        });
+    }
+
+    // Deduplicate
+    const unique = [];
+    const seen = new Set();
+    listings.sort((a, b) => a.price - b.price).forEach(l => {
+        const k = `${l.price}-${l.qty}-${l.source}`;
+        if (!seen.has(k)) {
+            seen.add(k);
+            unique.push(l);
+        }
+    });
+
+    return unique.slice(0, 15);
 };
